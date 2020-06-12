@@ -172,7 +172,7 @@ _DATASET = {
 }
 
 
-def build_dataset(name: str, data_dir: str, read_test: bool = False,
+def build_dataset(name: str, data_dir: str, read_test: bool = False, cache='',
                   **kwargs) -> Dict[str, Any]:
     dataset = dict()
     dataset[KEY_TRAIN] = _DATASET[name].build(data_dir, KEY_TRAIN, **kwargs)

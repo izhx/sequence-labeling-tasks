@@ -6,18 +6,26 @@ from typing import Dict, List, Tuple, Union, Any, cast
 
 import torch
 
-from allennlp.modules.conditional_random_field import ConditionalRandomField
-from allennlp.modules.time_distributed import TimeDistributed
+# from allennlp.modules import ConditionalRandomField, TimeDistributed
 
-from ..core import Model, Vocabulary
-from ..modules.embedding import build_word_embedding, DeepEmbedding
-from ..modules.encoder import build_encoder
-from ..modules.dropout import WordDropout
-from ..modules.linear import NonLinear
-from .dependency_parser import remove_sep
+from nmnlp.core import Model, Vocabulary
+from nmnlp.modules.embedding import build_word_embedding, DeepEmbedding
+from nmnlp.modules.encoder import build_encoder
+from nmnlp.modules.dropout import WordDropout
+from nmnlp.modules.linear import NonLinear
+from nmnlp.models.dependency_parser import remove_sep
+
+from conditional_random_field import ConditionalRandomField
 
 
-class CRFTagger(Model):
+def build_model(name, **kwargs):
+    m = {
+        'srl': SemanticRoleLabeler,
+    }
+    return m[name](**kwargs)
+
+
+class SemanticRoleLabeler(Model):
     """
     a
     """
@@ -61,8 +69,7 @@ class CRFTagger(Model):
         else:
             self.encoder = None
 
-        self.tag_projection_layer = TimeDistributed(
-            torch.nn.Linear(feat_dim, len(vocab[label_namespace])))
+        self.tag_projection_layer = torch.nn.Linear(feat_dim, len(vocab[label_namespace]))
         self.word_dropout = WordDropout(dropout)
         self.crf = ConditionalRandomField(len(vocab[label_namespace]))
         self.top_k = top_k

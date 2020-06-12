@@ -2,17 +2,23 @@
 工具
 """
 
+import os
 import codecs
 import pickle
 
 from nmnlp.common.util import output
-from dataset import index_dataset
+from datasets import index_dataset
 
-PATH = "./data/"
+PATH = "./dev/"
 
 
-def save_data(name, dataset, vocab):
-    index_dataset(dataset, vocab)
+def is_data(name):
+    return os.path.isfile(f"{PATH}data-{name}.bin")
+
+
+def save_data(name, dataset, vocab, index=False):
+    if index:
+        index_dataset(dataset, vocab)
     with codecs.open(f"{PATH}data-{name}.bin", 'wb') as f:
         pickle.dump((dataset, vocab), f)
     output(f"===> saved at <{PATH}data-{name}.bin>")
