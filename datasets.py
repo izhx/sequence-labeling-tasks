@@ -103,6 +103,10 @@ class SRLDataset(DataSet):
         ins = {'words': list(), 'upostag': list(), 'sent': list()}
         pieces, predicate_ids = dict(), list()
 
+        padding_len = len(sentence[0]) - 4
+        sentence.insert(0, [0, '[CLS]', '', 'X'] + ['_'] * padding_len)
+        sentence.append([len(sentence), '[SEP]', '', 'X'] + ['_'] * padding_len)
+
         for i, row in enumerate(sentence):
             ins['sent'].append(row[1])
             ins['upostag'].append(row[3])
@@ -124,8 +128,8 @@ class SRLDataset(DataSet):
         # print('\n')
         def label_map(label):
             LABEL[label] += 1
-            if label in ('V', 'C-V', 'R-V'):
-                return '_'  # 待确定
+            # if label in ('V', 'C-V', 'R-V'):
+            #     return '_'  # 待确定
             if 'ARG' in label:
                 return label.replace('ARG', 'A')
             return label
@@ -134,6 +138,8 @@ class SRLDataset(DataSet):
             one = copy.deepcopy(ins)
             one['indicator'] = p
             one['labels'] = [label_map(line[col]) for line in sentence]
+            # if 'V' not in one['labels'][p]:
+            #     one['labels'][p] = 'V'  # 10个这种的
             self.data.append(one)
 
     def collate_fn(self, batch):

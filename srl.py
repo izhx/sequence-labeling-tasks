@@ -25,11 +25,11 @@ nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 20
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('-yaml',
                          type=str,
-                         default='./srlen.yml',
+                         default='./dev/config/srlde-bert.yml',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('-cuda',
                          type=str,
-                         default='0',
+                         default='5',
                          help='gpu ids, like: 1,2,3')
 _ARG_PARSER.add_argument('-debug', type=bool, default=False)
 _ARG_PARSER.add_argument("-test",
@@ -50,7 +50,7 @@ def set_seed(seed: int = 123):
 def run_once(cfg: Config, vocab, dataset, device, sampler):
     model = build_model(vocab=vocab, **cfg['model'])
     para_num = sum([np.prod(list(p.size())) for p in model.parameters()])
-    output(f'param num: {para_num}, size: {para_num * 4 / 1000 / 1000:4f}M')
+    output(f'param num: {para_num}, {para_num / 1000000:4f}M')
     model.to(device=device)
 
     # param_groups = param_groups_with_different_lr(model, 1e-3, bert=1e-4)
@@ -81,7 +81,7 @@ def main():
     """ a   """
 
     cfg = Config.from_file(_ARGS.yaml)
-    device = set_visible_devices(_ARGS.cuda)
+    device = torch.device(f"cuda:{_ARGS.cuda}")  # set_visible_devices(_ARGS.cuda)
     data_kwargs, vocab_kwargs = dict(cfg['data']), dict(cfg['vocab'])
     use_bert = 'bert' in cfg['model']['word_embedding']['name_or_path']
 
@@ -111,11 +111,19 @@ def main():
             'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'AA', 'AM-COM', 'AM-LOC', 'AM-DIR', 'AM-GOL',
             'AM-MNR', 'AM-TMP', 'AM-EXT', 'AM-REC', 'AM-PRD', 'AM-PRP', 'AM-CAU',
             'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
-            'AM-CXN', 'AM-PRR' , 'A1-DSP']  # AM-PRR A1-DSP 新的
+            'AM-CXN', 'AM-PRR' , 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
         labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
-        labels.append('_')
+        labels = ['<pad>', '<unk>'] + labels + ['_']
         vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
         vocab._index_to_token['labels'] = {i: k for i, k in enumerate(labels)}
+
+        pos = [
+            'X', 'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN',
+            'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB',
+            "CONJ"  # de中非upos标准 CONJ
+        ]
+        vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
+        vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
 
         if use_bert:
             vocab._token_to_index['words'] = tokenizer.vocab
