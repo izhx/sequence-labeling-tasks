@@ -60,7 +60,7 @@ LABEL = defaultdict(int)
 
 class SRLDataset(DataSet):
     """ SRL dataset """
-    index_fields = ("words", "upostag")
+    index_fields = ("words", "upostag", "labels")
 
     def __init__(self,
                  data: List,
@@ -117,16 +117,17 @@ class SRLDataset(DataSet):
             else:
                 ins['words'].append(row[1])
         ins['sent'] = ' '.join(ins['sent'])
-        if self.tokenizer is not None:
-            ins['word_pieces'] = pieces
+        ins['word_pieces'] = pieces
 
         # for row in sentence:
         #     print(len(row), '\t', '\t'.join(row[sense_col:]))
         # print('\n')
         def label_map(label):
             LABEL[label] += 1
-            if label == 'V':
+            if label in ('V', 'C-V', 'R-V'):
                 return '_'  # 待确定
+            if 'ARG' in label:
+                return label.replace('ARG', 'A')
             return label
 
         for col, p in enumerate(predicate_ids, start=sense_col + 1):
@@ -139,16 +140,18 @@ class SRLDataset(DataSet):
         ids_sorted = sorted(
             range(len(batch)), key=lambda i: len(batch[i]['words']), reverse=True)
 
-        max_len = len(batch[ids_sorted[0]]['words']) + 1  # for bert
+        max_len = len(batch[ids_sorted[0]]['words'])
+        if self.tokenizer is not None:
+            max_len += 1 # for bert
         result = defaultdict(lambda: torch.zeros(len(batch), max_len, dtype=torch.long))
         result['seq_lens'] = list()
-        result['sent'] = list()
+        result['sentences'] = list()
         result['word_pieces'] = dict()
 
         for i, origin in zip(range(len(batch)), ids_sorted):
             seq_len = len(batch[origin]['words'])
             result['seq_lens'].append(seq_len)
-            result['sent'].append(batch[origin]['sent'])
+            result['sentences'].append(batch[origin]['sent'])
             result['mask'][i, :seq_len] = 1
             result['indicator'][i, batch[origin]['indicator']] = 1
             for key in ('words', 'upostag', 'labels'):

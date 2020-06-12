@@ -5,11 +5,12 @@
 from typing import Dict, List, Tuple, Union, Any, cast
 
 import torch
+from torch.nn import Embedding
 
 # from allennlp.modules import ConditionalRandomField, TimeDistributed
 
 from nmnlp.core import Model, Vocabulary
-from nmnlp.modules.embedding import build_word_embedding, DeepEmbedding
+from nmnlp.modules.embedding import build_word_embedding
 from nmnlp.modules.encoder import build_encoder
 from nmnlp.modules.dropout import WordDropout
 from nmnlp.modules.linear import NonLinear
@@ -32,8 +33,9 @@ class SemanticRoleLabeler(Model):
     def __init__(self,
                  vocab: Vocabulary,
                  word_embedding: Dict[str, Any],
-                 pos_embedding: Dict[str, Any] = None,
                  transform_dim: int = 0,
+                 pos_dim: int = 50,
+                 indicator_dim: int = 50,
                  encoder: Dict[str, Any] = None,
                  dropout: float = 0.33,
                  label_namespace: str = "labels",
@@ -57,11 +59,9 @@ class SemanticRoleLabeler(Model):
         else:
             self.word_transform = None
 
-        if pos_embedding is not None:
-            self.pos_embedding = DeepEmbedding(len(vocab['upostag']), **pos_embedding)
-            feat_dim += self.pos_embedding.output_dim
-        else:
-            self.pos_embedding = None
+        self.pos_embedding = Embedding(len(vocab['upostag']), pos_dim, 0)
+        self.indicator_embedding = Embedding(2, indicator_dim)
+        feat_dim += (pos_dim + indicator_dim)
 
         if encoder is not None:
             self.encoder = build_encoder(feat_dim, dropout=dropout, **encoder)
@@ -75,26 +75,28 @@ class SemanticRoleLabeler(Model):
         self.top_k = top_k
 
     def forward(self,
-                input_ids: torch.Tensor = None,
+                indicator: torch.Tensor,
+                upostag: torch.Tensor,
+                words: torch.Tensor = None,
                 sentences: List = None,
-                upostag: torch.Tensor = None,
                 mask: torch.Tensor = None,
                 seq_lens: torch.Tensor = None,
-                tags: torch.Tensor = None,
+                labels: torch.Tensor = None,
                 **kwargs) -> Tuple[Union[torch.Tensor, List, Dict]]:
-        feat = self.embedding(input_ids, sentences, **kwargs)
+        feat = self.embedding(words, sentences, **kwargs)
         if self.word_transform is not None:
             feat = self.word_transform(feat)
+        
+        indicator = self.indicator_embedding(indicator)
+        upostag = self.pos_embedding(upostag)
+        feat = torch.cat([feat, upostag, indicator], dim=-1)
 
-        if self.pos_embedding is not None:
-            upostag = self.pos_embedding(upostag, **kwargs)
-            feat = torch.cat([feat, upostag], dim=2)
 
         feat = self.word_dropout(feat)
         if self.encoder is not None:
             feat = self.encoder(feat, seq_lens, **kwargs)  # unpack会去掉[SEP]那一列
             if feat.shape[1] == mask.shape[1] - 1:
-                mask, head, deprel = remove_sep([mask, tags])
+                mask, labels = remove_sep([mask, labels])
         feat = self.word_dropout(feat)
 
         scores = self.tag_projection_layer(feat)
@@ -103,8 +105,7 @@ class SemanticRoleLabeler(Model):
         if not self.training:
             best_paths = self.crf.viterbi_tags(scores, mask, top_k=self.top_k)
             # Just get the top tags and ignore the scores.
-            predicted_tags = cast(List[List[int]],
-                                  [x[0][0] for x in best_paths])
+            predicted_tags = cast(List[List[int]], [x[0][0] for x in best_paths])
             output['predicted_tags']
 
         if tags is not None:

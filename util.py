@@ -9,7 +9,7 @@ import pickle
 from nmnlp.common.util import output
 from datasets import index_dataset
 
-PATH = "./dev/"
+PATH = "./dev/cache/"
 
 
 def is_data(name):

@@ -70,8 +70,6 @@ def run_once(cfg: Config, vocab, dataset, device, sampler):
         trainer.load()
     else:
         trainer.epoch_start = 0
-    if _ARGS.lang is not None:
-        trainer.prefix += _ARGS.lang
 
     if not _ARGS.test:
         trainer.train()
@@ -110,10 +108,10 @@ def main():
         vocab = Vocabulary.from_instances(dataset, **vocab_kwargs)
 
         labels = [
-            'A0', 'A1', 'A2', 'A3', 'A4', 'AM-COM', 'AM-LOC', 'AM-DIR', 'AM-GOL',
+            'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'AA', 'AM-COM', 'AM-LOC', 'AM-DIR', 'AM-GOL',
             'AM-MNR', 'AM-TMP', 'AM-EXT', 'AM-REC', 'AM-PRD', 'AM-PRP', 'AM-CAU',
             'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
-            'AM-CXN']
+            'AM-CXN', 'AM-PRR' , 'A1-DSP']  # AM-PRR A1-DSP 新的
         labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
         labels.append('_')
         vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
@@ -136,4 +134,5 @@ if __name__ == '__main__':
 
 """
 /model_weight/elmo-original/elmo_2x4096_512_2048cnn_2xhighway_5.5B
+
 """
