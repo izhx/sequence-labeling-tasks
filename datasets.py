@@ -147,8 +147,6 @@ class SRLDataset(DataSet):
             range(len(batch)), key=lambda i: len(batch[i]['words']), reverse=True)
 
         max_len = len(batch[ids_sorted[0]]['words'])
-        if self.tokenizer is not None:
-            max_len += 1 # for bert
         result = defaultdict(lambda: torch.zeros(len(batch), max_len, dtype=torch.long))
         result['seq_lens'] = list()
         result['sentences'] = list()
@@ -166,9 +164,6 @@ class SRLDataset(DataSet):
                 result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
             for w, piece in batch[origin]['word_pieces'].items():
                 result['word_pieces'][(i, w)] = torch.LongTensor(piece)
-            if self.tokenizer is not None:
-                result['words'][i, 0] = 101  # [CLS]
-                result['words'][i, seq_len] = 102  # [SEP]
             # if (result['words'][i] == 100).long().sum() > seq_len // 3:
             #     print(batch[0]['metadata']['lang'], ':', batch[origin]['form'])
 

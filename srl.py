@@ -1,6 +1,4 @@
-"""
-多语言句法分析
-"""
+# coding=UTF-8
 
 import os
 import argparse
@@ -20,19 +18,19 @@ from datasets import build_dataset
 from models import build_model
 from util import read_data, save_data, is_data
 
-nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 20
+nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
-_ARG_PARSER.add_argument('-yaml',
+_ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='./dev/config/srlde-bert.yml',
+                         default='srlde-bert',
                          help='configuration file path.')
-_ARG_PARSER.add_argument('-cuda',
+_ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
-                         default='5',
+                         default='0',
                          help='gpu ids, like: 1,2,3')
-_ARG_PARSER.add_argument('-debug', type=bool, default=False)
-_ARG_PARSER.add_argument("-test",
+_ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
+_ARG_PARSER.add_argument("--test", '-t',
                          default=False,
                          action="store_true",
                          help="test mode")
@@ -80,7 +78,7 @@ def run_once(cfg: Config, vocab, dataset, device, sampler):
 def main():
     """ a   """
 
-    cfg = Config.from_file(_ARGS.yaml)
+    cfg = Config.from_file(f"./dev/config/{_ARGS.yaml}.yml")
     device = torch.device(f"cuda:{_ARGS.cuda}")  # set_visible_devices(_ARGS.cuda)
     data_kwargs, vocab_kwargs = dict(cfg['data']), dict(cfg['vocab'])
     use_bert = 'bert' in cfg['model']['word_embedding']['name_or_path']

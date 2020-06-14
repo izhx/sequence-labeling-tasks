@@ -4,3 +4,6 @@
 [submodule "UniversalPropositions"]
 	path = UniversalPropositions
 	url = https://github.com/System-T/UniversalPropositions.git
+[submodule "streusle"]
+	path = streusle
+	url = https://github.com/nert-nlp/streusle.git

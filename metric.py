@@ -38,5 +38,8 @@ class SRLMetric(object):
         # pre  预测对了几个
         recall = got / num
         precision = correct / num
-        f1 = 2 * precision * recall / (precision + recall)
+        if precision + recall == 0:
+            f1 = 0
+        else:
+            f1 = 2 * precision * recall / (precision + recall)
         return {'F1': f1, 'precision':precision, 'recall': recall}
