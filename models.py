@@ -45,12 +45,6 @@ class SemanticRoleLabeler(Model):
                                                    vocab=vocab,
                                                    dropout=dropout,
                                                    **word_embedding)
-        if 'elmo' in word_embedding['name_or_path']:
-            self.embedding = lambda ids, seqs, mask, **kwargs: self.word_embedding(
-                seqs, **kwargs)
-        else:
-            self.embedding = lambda ids, seqs, mask, **kwargs: self.word_embedding(
-                ids, mask=mask, **kwargs)
         feat_dim: int = self.word_embedding.output_dim
 
         if transform_dim > 0:
@@ -86,12 +80,11 @@ class SemanticRoleLabeler(Model):
                 indicator: torch.Tensor,
                 upostag: torch.Tensor,
                 words: torch.Tensor = None,
-                sentences: List = None,
                 mask: torch.Tensor = None,
                 seq_lens: torch.Tensor = None,
                 labels: torch.Tensor = None,
                 **kwargs) -> Tuple[Union[torch.Tensor, List, Dict]]:
-        feat = self.embedding(words, sentences, mask, **kwargs)
+        feat = self.word_embedding(words, mask=mask, **kwargs)
         if self.word_transform is not None:
             feat = self.word_transform(feat)
 

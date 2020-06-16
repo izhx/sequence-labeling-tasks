@@ -1,8 +1,8 @@
 # coding=UTF-8
 
 import os
-import argparse
 import random
+import argparse
 
 import numpy as np
 import torch
@@ -16,18 +16,18 @@ from nmnlp.core import Trainer, Vocabulary
 
 from datasets import build_dataset
 from models import build_model
-from util import read_data, save_data, is_data
+from util import read_data, save_data, is_data, select_vec
 
 nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='srlde-bert',
+                         default='srlde',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
-                         default='0',
+                         default='3',
                          help='gpu ids, like: 1,2,3')
 _ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
 _ARG_PARSER.add_argument("--test", '-t',
@@ -77,8 +77,8 @@ def run_once(cfg: Config, vocab, dataset, device, sampler):
 
 def main():
     """ a   """
-
-    cfg = Config.from_file(f"./dev/config/{_ARGS.yaml}.yml")
+    root = "/data/private/zms/sequence-labeling-tasks"
+    cfg = Config.from_file(f"{root}/dev/config/{_ARGS.yaml}.yml")
     device = torch.device(f"cuda:{_ARGS.cuda}")  # set_visible_devices(_ARGS.cuda)
     data_kwargs, vocab_kwargs = dict(cfg['data']), dict(cfg['vocab'])
     use_bert = 'bert' in cfg['model']['word_embedding']['name_or_path']
@@ -109,7 +109,7 @@ def main():
             'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'AA', 'AM-COM', 'AM-LOC', 'AM-DIR', 'AM-GOL',
             'AM-MNR', 'AM-TMP', 'AM-EXT', 'AM-REC', 'AM-PRD', 'AM-PRP', 'AM-CAU',
             'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
-            'AM-CXN', 'AM-PRR' , 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
+            'AM-CXN', 'AM-PRR', 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
         labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
         labels = ['<pad>', '<unk>'] + labels + ['_']
         vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
@@ -131,6 +131,9 @@ def main():
     else:
         dataset, vocab = read_data(data_kwargs['cache'])
 
+    # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/cc.de.300.vec",
+    #            f"{root}/dev/vec/cc_de_300_UP.vec")
+
     run_once(cfg, vocab, dataset, device, None)
 
 
@@ -139,6 +142,5 @@ if __name__ == '__main__':
     main()
 
 """
-/model_weight/elmo-original/elmo_2x4096_512_2048cnn_2xhighway_5.5B
 
 """

@@ -11,7 +11,7 @@ from collections import defaultdict
 
 import torch
 
-from nmnlp.common.constant import KEY_TRAIN, KEY_DEV, KEY_TEST
+from nmnlp.common.constant import KEY_TRAIN, KEY_DEV, KEY_TEST, PRETRAIN_POSTFIX
 from nmnlp.core.dataset import DataSet
 
 
@@ -119,9 +119,11 @@ class SRLDataset(DataSet):
                     if len(piece) > 1:
                         pieces[i] = [self.tokenizer.vocab[p] for p in piece]
             else:
-                ins['words'].append(row[1])
-        ins['sent'] = ' '.join(ins['sent'])
+                ins['words'].append(row[1].lower())
+
         ins['word_pieces'] = pieces
+        if len(self.pretrained_fields) > 0:
+            ins["words" + PRETRAIN_POSTFIX] = copy.deepcopy(ins['words'])
 
         # for row in sentence:
         #     print(len(row), '\t', '\t'.join(row[sense_col:]))
