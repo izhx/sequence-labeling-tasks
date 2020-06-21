@@ -13,6 +13,7 @@ import torch
 
 from nmnlp.common.constant import KEY_TRAIN, KEY_DEV, KEY_TEST, PRETRAIN_POSTFIX
 from nmnlp.core.dataset import DataSet
+from nmnlp.data.conll import ConlluDataset
 
 
 class STREUSLEDataset(DataSet):
@@ -31,25 +32,57 @@ class STREUSLEDataset(DataSet):
               kind: str = KEY_TRAIN,
               tokenizer: Any = None,
               pretrained_fields: Set[str] = ()):
-        path = f"{data_dir}/{kind}/streusle.ud_{kind}.conllulex"
-        data = []
+        path = glob.glob(f"{data_dir}/*/*{kind}.conllulex")[0]
+        dataset = cls(list(), tokenizer, pretrained_fields)
 
         with codecs.open(path, mode='r', encoding='UTF-8') as file:
             sentence = list()
             for line in chain(file, [""]):
                 line = line.strip()
                 if not line and sentence:
-                    data.append(cls.text_to_instance(sentence))
+                    if len(sentence[0]) > 10:
+                        dataset.text_to_instance(sentence)
                     sentence = list()
                 elif line.startswith('#'):
                     continue
                 else:
-                    sentence.append(line)
+                    line = line.split('\t')
+                    try:
+                        line[0] = int(line[0])
+                        sentence.append(line)
+                    except ValueError:
+                        continue
 
-        return cls(data, tokenizer, pretrained_fields)
+        return dataset
 
     def text_to_instance(self, sentence):
-        raise NotImplementedError
+        ins = {'words': list(), 'upostag': list(), 'sent': list(), 'labels': list()}
+        pieces = dict()
+        print('\n')
+        for i, row in enumerate(sentence):
+            print('\t'.join(row[10:]))
+            ins['sent'].append(row[1])
+            ins['upostag'].append(row[3])
+            if self.tokenizer is not None:
+                piece = self.tokenizer.tokenize(row[1])
+                if len(piece) > 0:
+                    ins['words'].append(piece[0])
+                    if len(piece) > 1:
+                        pieces[i] = [self.tokenizer.vocab[p] for p in piece]
+            else:
+                ins['words'].append(row[1].lower())
+            if row[10] != '_' or row[13] != '_':
+                ins['labels'].append(row[-1].split('|')[0])
+            else:
+                ins['labels'].append('_')
+
+            # TODO 排除掉weak MWEs
+
+        ins['word_pieces'] = pieces
+        if len(self.pretrained_fields) > 0:
+            ins["words" + PRETRAIN_POSTFIX] = copy.deepcopy(ins['words'])
+
+        self.data.append(ins)
 
     def collate_fn(self, batch):
         raise NotImplementedError
@@ -175,6 +208,7 @@ class SRLDataset(DataSet):
 _DATASET = {
     'streusle': STREUSLEDataset,
     'srl': SRLDataset,
+    'dep': ConlluDataset,
 }
 
 

@@ -1,7 +1,6 @@
 # coding=UTF-8
 
 import os
-import time
 import random
 import argparse
 
@@ -11,12 +10,10 @@ from torch.optim import Adam
 from transformers import BertTokenizer
 
 import nmnlp
-from nmnlp.common.util import output, set_visible_devices
+from nmnlp.common.util import output
 from nmnlp.common.config import Config
 from nmnlp.core import Trainer, Vocabulary
-from nmnlp.core.optim import build_optimizer
 
-from notag import parser_and_vocab_from_pretrained, collate_fn_wrapper
 from datasets import build_dataset
 from models import build_model
 from util import read_data, save_data, is_data, select_vec
@@ -26,7 +23,7 @@ nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='srlen-depsawr',
+                         default='dep-en',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
@@ -37,6 +34,10 @@ _ARG_PARSER.add_argument("--test", '-t',
                          default=False,
                          action="store_true",
                          help="test mode")
+_ARG_PARSER.add_argument('--save', '-s',
+                         type=str,
+                         default='depsawr',
+                         help='存储文件夹名')
 _ARGS = _ARG_PARSER.parse_args()
 
 
@@ -48,22 +49,21 @@ def set_seed(seed: int = 123):
     torch.cuda.manual_seed_all(seed)
 
 
-def run_once(cfg: Config, vocab, dataset, device, parser):
-    model = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
+def run_once(cfg: Config, vocab, dataset, device, sampler, upostag):
+    model = build_model(vocab=vocab, upostag=upostag, **cfg['model'])
     para_num = sum([np.prod(list(p.size())) for p in model.parameters()])
     output(f'param num: {para_num}, {para_num / 1000000:4f}M')
     model.to(device=device)
 
-    optimizer = build_optimizer(model, **cfg['optim'])
+    # param_groups = param_groups_with_different_lr(model, 1e-3, bert=1e-4)
 
-    # epoch_steps = len(dataset['train']) // cfg['trainer']['batch_size'] + 1
-
+    optimizer = Adam(model.parameters(), **cfg['optim'])
     scheduler = None
 
     if cfg['trainer']['tensorboard'] and _ARGS.debug:
         cfg['trainer']['tensorboard'] = False
-    # cfg['trainer']['log_batch'] = _ARGS.debug
-    trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, scheduler,
+    cfg['trainer']['log_batch'] = _ARGS.debug
+    trainer = Trainer(cfg, dataset, vocab, model, optimizer, sampler, scheduler,
                       device, **cfg['trainer'])
 
     if 'pre_train_path' in cfg['trainer'] and os.path.isfile(
@@ -76,19 +76,24 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     if not _ARGS.test:
         trainer.train()
         trainer.load()
-    return trainer.test(dataset['test'], 64)
+    trainer.test(dataset['test'], 64)
+
+    model.depsawr.save(f'/data/private/zms/model_weight/depsawr-{_ARGS.save}/')
 
 
 def main():
     """ a   """
     root = "/data/private/zms/sequence-labeling-tasks"
     cfg = Config.from_file(f"{root}/dev/config/{_ARGS.yaml}.yml")
-
-    print(cfg.cfg)
-
     device = torch.device(f"cuda:{_ARGS.cuda}")  # set_visible_devices(_ARGS.cuda)
     data_kwargs, vocab_kwargs = dict(cfg['data']), dict(cfg['vocab'])
     use_bert = 'bert' in cfg['model']['word_embedding']['name_or_path']
+
+    pos = [
+        '<pad>', '<unk>', 'X', 'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ',
+        'NOUN', 'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB',
+        "CONJ"  # de中非upos标准 CONJ
+        ]
 
     if use_bert:
         tokenizer = BertTokenizer.from_pretrained(
@@ -112,60 +117,21 @@ def main():
             vocab_kwargs['create_fields'] = dataset['train'].index_fields
         vocab = Vocabulary.from_instances(dataset, **vocab_kwargs)
 
-        if 'upostag' in vocab_kwargs['create_fields']:
-            pos = [
-                'X', 'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN',
-                'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB',
-                "CONJ"  # de中非upos标准 CONJ
-            ]
-            vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
-            vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
+        vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
+        vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
 
         if use_bert:
             vocab._token_to_index['words'] = tokenizer.vocab
             vocab._index_to_token['words'] = tokenizer.ids_to_tokens
-
-        dataset, vocab = post_process(data_kwargs['name'], dataset, vocab)
 
         save_data(data_kwargs['cache'], dataset, vocab)
     else:
         dataset, vocab = read_data(data_kwargs['cache'])
 
     # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/cc.de.300.vec",
-    #            f"{root}/dev/vec/cc_de_300_UP.vec")
+    #            f"{root}/dev/vec/cc_de_300_UD.vec")
 
-    if 'depsawr' in cfg.cfg:
-        parser, parser_vocab = parser_and_vocab_from_pretrained(cfg['depsawr'], device)
-        for k in dataset:
-            dataset[k].collate_fn = collate_fn_wrapper(parser_vocab, dataset[k].collate_fn)
-    else:
-        parser = None
-
-    run_once(cfg, vocab, dataset, device, parser)
-    loop(device)
-
-
-def post_process(name, dataset, vocab):
-    if name == 'srl':
-        labels = [
-            'A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'AA', 'AM-COM', 'AM-LOC', 'AM-DIR', 'AM-GOL',
-            'AM-MNR', 'AM-TMP', 'AM-EXT', 'AM-REC', 'AM-PRD', 'AM-PRP', 'AM-CAU',
-            'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
-            'AM-CXN', 'AM-PRR', 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
-        labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
-        labels = ['<pad>', '<unk>'] + labels + ['_']
-        vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
-        vocab._index_to_token['labels'] = {i: k for i, k in enumerate(labels)}
-
-    return dataset, vocab
-
-
-def loop(device):
-    while True:
-        time.sleep(0.01)
-        a, b = torch.rand(233, 233, 233).to(device), torch.rand(233, 233, 233).to(device)
-        c = a * b
-        a = c
+    run_once(cfg, vocab, dataset, device, None, pos)
 
 
 if __name__ == '__main__':

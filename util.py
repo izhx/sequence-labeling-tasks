@@ -8,6 +8,7 @@ import pickle
 from collections import defaultdict
 
 from nmnlp.common.util import output
+from nmnlp.core.dataset import DataSet
 from datasets import index_dataset
 
 PATH = "./dev/cache/"
@@ -34,9 +35,14 @@ def read_data(name):
 def select_vec(dataset, vec_path, new_path):
     counter = defaultdict(int)
     for data in dataset.values():
-        for ins in data.data:
-            for w in ins['words']:
-                counter[w] += 1
+        if isinstance(data, DataSet):
+            data = [data]
+        elif isinstance(data, dict):
+            data = data.values()
+        for one in data:
+            for ins in one.data:
+                for w in ins['words']:
+                    counter[w] += 1
 
     new_vec = []
     with codecs.open(vec_path, mode='r', encoding='UTF-8') as file:
@@ -48,4 +54,4 @@ def select_vec(dataset, vec_path, new_path):
         file.write(f"{len(new_vec)} 300\n")
         file.writelines(new_vec)
 
-    return
+    output(f"save at <{new_path}>")
