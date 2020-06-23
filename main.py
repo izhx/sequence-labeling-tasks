@@ -4,6 +4,7 @@ import os
 import time
 import random
 import argparse
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -26,7 +27,7 @@ nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='srlen-depsawr',
+                         default='sst',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
@@ -131,8 +132,8 @@ def main():
     else:
         dataset, vocab = read_data(data_kwargs['cache'])
 
-    # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/cc.de.300.vec",
-    #            f"{root}/dev/vec/cc_de_300_UP.vec")
+    # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/glove.6B.300d.txt",
+    #            f"{root}/dev/vec/glove_6B_300d_SS.vec")
 
     if 'depsawr' in cfg.cfg:
         parser, parser_vocab = parser_and_vocab_from_pretrained(cfg['depsawr'], device)
@@ -153,16 +154,40 @@ def post_process(name, dataset, vocab):
             'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
             'AM-CXN', 'AM-PRR', 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
         labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
-        labels = ['<pad>', '<unk>'] + labels + ['_']
-        vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
-        vocab._index_to_token['labels'] = {i: k for i, k in enumerate(labels)}
+    if name == 'streusle':
+        labels = [
+            "n.relation", "n.cognition", "n.group", "n.feeling", "n.animal",
+            "n.person", "n.time", "n.plant", "n.event", "n.artifact", "n.state",
+            "n.quantity", "n.phenomenon", "n.process", "n.naturalobject",
+            "n.act", "n.communication", "n.other", "n.attribute", "n.shape",
+            "n.food", "n.motive", "n.body", "n.location", "n.substance",
+            "n.possession", "p.interval", "p.instrument", "p.locus",
+            "p.originator", "p.rateunit", "p.comparisonref", "p.theme",
+            "p.socialrel", "p.path", "p.time", "p.whole", "p.stuff",
+            "p.ensemble", "p.topic", "p.starttime", "p.causer", "p.possessor",
+            "p.experiencer", "p.orgmember", "p.beneficiary", "p.direction",
+            "p.means", "p.partportion", "p.recipient", "p.approximator",
+            "p.cost", "p.stimulus", "p.explanation", "p.species", "p.goal",
+            "p.agent", "p.possession", "p.duration", "p.source", "p.extent",
+            "p.circumstance", "p.endtime", "p.identity", "p.quantityitem",
+            "p.org", "p.characteristic", "p.manner", "p.frequency",
+            "p.ancillary", "p.purpose", "p.gestalt", "v.creation", "v.motion",
+            "v.change", "v.body", "v.contact", "v.competition", "v.cognition",
+            "v.social", "v.communication", "v.stative", "v.perception",
+            "v.emotion", "v.possession", "v.consumption"
+        ]
+        labels = ['B_' + i for i in labels] + ['I_' + i for i in labels] + ['O_' + i for i in labels]
 
+    labels = ['<pad>', '<unk>'] + labels + ['O_`$', 'O_??', '_']
+    vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
+    vocab._index_to_token['labels'] = {i: k for i, k in enumerate(labels)}
     return dataset, vocab
 
 
 def loop(device):
+    output("start looping...")
     while True:
-        time.sleep(0.01)
+        time.sleep(0.05)
         a, b = torch.rand(233, 233, 233).to(device), torch.rand(233, 233, 233).to(device)
         c = a * b
         a = c

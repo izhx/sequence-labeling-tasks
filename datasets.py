@@ -15,10 +15,14 @@ from nmnlp.common.constant import KEY_TRAIN, KEY_DEV, KEY_TEST, PRETRAIN_POSTFIX
 from nmnlp.core.dataset import DataSet
 from nmnlp.data.conll import ConlluDataset
 
+from translate import Translate
+
+translate = Translate()
+
 
 class STREUSLEDataset(DataSet):
     """ super-sense dataset """
-    index_fields = ("words",)
+    index_fields = ("words", "upostag", "labels")
 
     def __init__(self,
                  data: List,
@@ -57,10 +61,15 @@ class STREUSLEDataset(DataSet):
 
     def text_to_instance(self, sentence):
         ins = {'words': list(), 'upostag': list(), 'sent': list(), 'labels': list()}
-        pieces = dict()
-        print('\n')
+        pieces, mwe = dict(), dict()
+        # print('\n')
+
+        padding_len = len(sentence[0]) - 4
+        sentence.insert(0, [0, '[CLS]', '[CLS]', 'X'] + ['_'] * padding_len)
+        sentence.append([len(sentence), '[SEP]', '[SEP]', 'X'] + ['_'] * padding_len)
+
         for i, row in enumerate(sentence):
-            print('\t'.join(row[10:]))
+            # print('\t'.join(row[10:]))
             ins['sent'].append(row[1])
             ins['upostag'].append(row[3])
             if self.tokenizer is not None:
@@ -71,12 +80,22 @@ class STREUSLEDataset(DataSet):
                         pieces[i] = [self.tokenizer.vocab[p] for p in piece]
             else:
                 ins['words'].append(row[1].lower())
-            if row[10] != '_' or row[13] != '_':
-                ins['labels'].append(row[-1].split('|')[0])
+            if row[13] != '_':
+                label = row[13].lower()
+                if row[10] == '_':
+                    ins['labels'].append(f"O_{label}")
+                else:
+                    mwe[row[10].split(':')[0]] = label
+                    ins['labels'].append(f"B_{label}")
             else:
                 ins['labels'].append('_')
 
-            # TODO 排除掉weak MWEs
+        for i, row in enumerate(sentence):
+            if row[10] == '_':
+                continue
+            mwe_id, no = row[10].split(':')
+            if no != '1' and mwe_id in mwe:
+                ins['labels'][i] = f"I_{mwe[mwe_id]}"
 
         ins['word_pieces'] = pieces
         if len(self.pretrained_fields) > 0:
@@ -85,7 +104,30 @@ class STREUSLEDataset(DataSet):
         self.data.append(ins)
 
     def collate_fn(self, batch):
-        raise NotImplementedError
+        ids_sorted = sorted(
+            range(len(batch)), key=lambda i: len(batch[i]['words']), reverse=True)
+
+        max_len = len(batch[ids_sorted[0]]['words'])
+        result = defaultdict(lambda: torch.zeros(len(batch), max_len, dtype=torch.long))
+        result['seq_lens'] = list()
+        result['sentences'] = list()
+        result['word_pieces'] = dict()
+
+        for i, origin in zip(range(len(batch)), ids_sorted):
+            seq_len = len(batch[origin]['words'])
+            result['seq_lens'].append(seq_len)
+            result['sentences'].append(batch[origin]['sent'])
+            result['mask'][i, :seq_len] = 1
+            for key in ('words', 'upostag', 'labels'):
+                result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
+            for key in self.pretrained_fields:
+                result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
+            for w, piece in batch[origin]['word_pieces'].items():
+                result['word_pieces'][(i, w)] = torch.LongTensor(piece)
+            # if (result['words'][i] == 100).long().sum() > seq_len // 3:
+            #     print(batch[0]['metadata']['lang'], ':', batch[origin]['form'])
+
+        return result
 
 
 LABEL = defaultdict(int)
@@ -137,22 +179,33 @@ class SRLDataset(DataSet):
         pieces, predicate_ids = dict(), list()
 
         padding_len = len(sentence[0]) - 4
-        sentence.insert(0, [0, '[CLS]', '', 'X'] + ['_'] * padding_len)
-        sentence.append([len(sentence), '[SEP]', '', 'X'] + ['_'] * padding_len)
+        sentence.insert(0, [0, '[CLS]', '[CLS]', 'X'] + ['_'] * padding_len)
+        sentence.append([len(sentence), '[SEP]', '[SEP]', 'X'] + ['_'] * padding_len)
 
         for i, row in enumerate(sentence):
-            ins['sent'].append(row[1])
             ins['upostag'].append(row[3])
             if row[sense_col] != '_':
                 predicate_ids.append(i)
+
+            if lang == 'zh':
+                # word = row[2]
+                word = translate.ToSimplifiedChinese(row[1])
+                if word != row[2]:
+                    trans = translate.ToSimplifiedChinese(row[2])
+                    # print(f"{row[1]}[{word}]: {row[2]}[{trans}]")
+                    word = trans
+                    assert True
+            else:
+                word = row[1]
+            ins['sent'].append(word)
             if self.tokenizer is not None:
-                piece = self.tokenizer.tokenize(row[1])
+                piece = self.tokenizer.tokenize(word)
                 if len(piece) > 0:
                     ins['words'].append(piece[0])
                     if len(piece) > 1:
                         pieces[i] = [self.tokenizer.vocab[p] for p in piece]
             else:
-                ins['words'].append(row[1].lower())
+                ins['words'].append(word.lower())
 
         ins['word_pieces'] = pieces
         if len(self.pretrained_fields) > 0:
@@ -161,6 +214,7 @@ class SRLDataset(DataSet):
         # for row in sentence:
         #     print(len(row), '\t', '\t'.join(row[sense_col:]))
         # print('\n')
+
         def label_map(label):
             LABEL[label] += 1
             # if label in ('V', 'C-V', 'R-V'):
