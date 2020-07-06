@@ -5,6 +5,7 @@ import time
 import random
 import argparse
 from collections import defaultdict
+from itertools import chain
 
 import numpy as np
 import torch
@@ -18,7 +19,7 @@ from nmnlp.core import Trainer, Vocabulary
 from nmnlp.core.optim import build_optimizer
 
 from notag import parser_and_vocab_from_pretrained, collate_fn_wrapper
-from datasets import build_dataset
+from datasets import build_dataset, PMBDataset
 from models import build_model
 from util import read_data, save_data, is_data, select_vec
 
@@ -27,11 +28,11 @@ nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='sst',
+                         default='pmb',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
-                         default='3',
+                         default='0',
                          help='gpu ids, like: 1,2,3')
 _ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
 _ARG_PARSER.add_argument("--test", '-t',
@@ -67,12 +68,12 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, scheduler,
                       device, **cfg['trainer'])
 
-    if 'pre_train_path' in cfg['trainer'] and os.path.isfile(
-            cfg['trainer']['pre_train_path']
-    ):
-        trainer.load()
-    else:
-        trainer.epoch_start = 0
+    # if 'pre_train_path' in cfg['trainer'] and os.path.isfile(
+    #         cfg['trainer']['pre_train_path']
+    # ):
+    #     trainer.load()
+    # else:
+    # trainer.epoch_start = 0
 
     if not _ARGS.test:
         trainer.train()
@@ -84,6 +85,8 @@ def main():
     """ a   """
     root = "/data/private/zms/sequence-labeling-tasks"
     cfg = Config.from_file(f"{root}/dev/config/{_ARGS.yaml}.yml")
+
+    cfg['trainer']['epoch_start'] = 0
 
     print(cfg.cfg)
 
@@ -100,9 +103,19 @@ def main():
         data_kwargs['tokenizer'] = tokenizer
         vocab_kwargs['oov_token'] = tokenizer.unk_token,
         vocab_kwargs['padding_token'] = tokenizer.pad_token
+    else:
+        tokenizer = None
 
     if not is_data(data_kwargs['cache']):
-        dataset = build_dataset(**data_kwargs)
+        if data_kwargs['name'] == 'pmb':
+            folds = PMBDataset.read_all(data_kwargs['data_dir'])
+            dataset = {
+                'train': PMBDataset.build(chain(*folds[:-2]), **data_kwargs),
+                'dev': PMBDataset.build(folds[-2], **data_kwargs),
+                'test': PMBDataset.build(folds[-1], **data_kwargs)
+            }
+        else:
+            dataset = build_dataset(**data_kwargs)
 
         if use_bert:
             vocab_kwargs['create_fields'] = {
@@ -121,6 +134,16 @@ def main():
             ]
             vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
             vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
+        elif 'pos' in vocab_kwargs['create_fields']:
+            pos = [
+                'TO', 'RQU', 'FW', 'CD', 'JJS', 'POS', 'WRB', 'RP', 'NN', 'NNS',
+                ',', 'CC', 'SO', 'VBZ', 'LRB', 'DT', 'NNPS', 'IN', 'RRB', 'NNP',
+                'VBG', 'WP$', 'PRP', '.', 'EX', 'JJ', 'UH', 'VBD', 'WP', ':',
+                'RBS', 'MD', 'RB', 'VBN', 'VBP', 'PDT', '$', 'PRP$', ';', 'JJR',
+                'VB', 'WDT', 'LQU']
+            pos = ['<pad>', '<unk>'] + pos
+            vocab._token_to_index['pos'] = {k: i for i, k in enumerate(pos)}
+            vocab._index_to_token['pos'] = {i: k for i, k in enumerate(pos)}
 
         if use_bert:
             vocab._token_to_index['words'] = tokenizer.vocab
@@ -133,12 +156,14 @@ def main():
         dataset, vocab = read_data(data_kwargs['cache'])
 
     # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/glove.6B.300d.txt",
-    #            f"{root}/dev/vec/glove_6B_300d_SS.vec")
+    #            f"{root}/dev/vec/glove_6B_300d_SEM.vec")
 
     if 'depsawr' in cfg.cfg:
         parser, parser_vocab = parser_and_vocab_from_pretrained(cfg['depsawr'], device)
         for k in dataset:
             dataset[k].collate_fn = collate_fn_wrapper(parser_vocab, dataset[k].collate_fn)
+        if not cfg['trainer']['prefix'].endswith('dep'):
+            cfg['trainer']['prefix'] += '-dep'
     else:
         parser = None
 
@@ -154,7 +179,8 @@ def post_process(name, dataset, vocab):
             'AM-DIS', 'AM-MOD', 'AM-NEG', 'AM-DSP', 'AM-ADV', 'AM-ADJ', 'AM-LVB',
             'AM-CXN', 'AM-PRR', 'A1-DSP', 'V']  # AM-PRR A1-DSP 新的
         labels = labels + ['R-' + i for i in labels] + ['C-' + i for i in labels]
-    if name == 'streusle':
+        labels = ['<pad>', '<unk>'] + labels + ['O_`$', '_']
+    elif name == 'streusle':
         labels = [
             "n.relation", "n.cognition", "n.group", "n.feeling", "n.animal",
             "n.person", "n.time", "n.plant", "n.event", "n.artifact", "n.state",
@@ -174,11 +200,21 @@ def post_process(name, dataset, vocab):
             "p.ancillary", "p.purpose", "p.gestalt", "v.creation", "v.motion",
             "v.change", "v.body", "v.contact", "v.competition", "v.cognition",
             "v.social", "v.communication", "v.stative", "v.perception",
-            "v.emotion", "v.possession", "v.consumption"
+            "v.emotion", "v.possession", "v.consumption", '??'
         ]
         labels = ['B_' + i for i in labels] + ['I_' + i for i in labels] + ['O_' + i for i in labels]
+        labels = ['<pad>', '<unk>'] + labels + ['O_`$', '_']
+    elif name == 'pmb':
+        labels = [
+            'PRO', 'DST', 'EXT', 'GRE', 'IST', 'GPE', 'SCO', 'EXS', 'GEO', 'DIS',
+            'COL', 'LES', 'MOY', 'CLO', 'NOW', 'ORG', 'NOT', 'INT', 'DOW', 'NIL',
+            'NEC', 'CON', 'BUT', 'REF', 'DEG', 'COO', 'EXG', 'ART', 'PRX', 'UOM',
+            'TOP', 'QUV', 'ALT', 'YOC', 'EQU', 'SUB', 'SST', 'QUE', 'MOR', 'FUT',
+            'ORD', 'PFT', 'LIT', 'PER', 'ENS', 'POS', 'ROL', 'PRG', 'QUC', 'IMP',
+            'DEF', 'APX', 'HAS', 'REL', 'GRP', 'XCL', 'HAP', 'EPS', 'PST', 'EFS',
+            'GPO', 'NTH', 'ITJ', 'DOM', 'EMP', 'AND', 'BOT', 'CTC']
+        labels = ['<pad>', '<unk>'] + labels + ['_']
 
-    labels = ['<pad>', '<unk>'] + labels + ['O_`$', 'O_??', '_']
     vocab._token_to_index['labels'] = {k: i for i, k in enumerate(labels)}
     vocab._index_to_token['labels'] = {i: k for i, k in enumerate(labels)}
     return dataset, vocab

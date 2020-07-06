@@ -8,7 +8,7 @@ from itertools import chain
 import torch
 from torch.nn import Embedding, ModuleList
 
-from allennlp.modules import ConditionalRandomField
+from allennlp.modules import ConditionalRandomField, ScalarMix
 
 from nmnlp.core import Model, Vocabulary
 from nmnlp.models.dependency_parser import loss, DependencyParser, remove_sep
@@ -62,11 +62,12 @@ class SemanticRoleLabeler(Model):
             self.word_transform = None
 
         if depsawr:
-            dep_dim = kwargs.pop('dep_dim', 100)
+            dep_dim = kwargs.pop('dep_dim', 300)
             self.depsawr_forward = depsawr.forward
             self.projections = ModuleList(
                 [NonLinear(i, dep_dim) for i in depsawr.dims])
-            feat_dim += dep_dim * len(self.projections)
+            self.depsawr_mix = ScalarMix(len(depsawr.dims), True)
+            feat_dim += dep_dim
         else:
             self.depsawr_forward = None
 
@@ -107,7 +108,9 @@ class SemanticRoleLabeler(Model):
 
         embs = [self.indicator_embedding(indicator), self.pos_embedding(upostag)]
         if self.depsawr_forward is not None:
-            embs += self.depsawr_forward(kwargs['dw'], kwargs['ew'], mask, self.projections)
+            dep_emb = self.depsawr_mix(self.depsawr_forward(
+                kwargs['dw'], kwargs['ew'], mask, self.projections), mask)
+            embs.append(dep_emb)
         feat = torch.cat([feat, *embs], dim=-1)
 
         feat = self.word_dropout(feat)
@@ -170,11 +173,12 @@ class CRFTagger(Model):
             self.word_transform = None
 
         if depsawr:
-            dep_dim = kwargs.pop('dep_dim', 100)
+            dep_dim = kwargs.pop('dep_dim', 300)
             self.depsawr_forward = depsawr.forward
             self.projections = ModuleList(
                 [NonLinear(i, dep_dim) for i in depsawr.dims])
-            feat_dim += dep_dim * len(self.projections)
+            self.depsawr_mix = ScalarMix(len(depsawr.dims), True)
+            feat_dim += dep_dim
         else:
             self.depsawr_forward = None
 
@@ -213,7 +217,9 @@ class CRFTagger(Model):
 
         embs = [self.pos_embedding(upostag)]
         if self.depsawr_forward is not None:
-            embs += self.depsawr_forward(kwargs['dw'], kwargs['ew'], mask, self.projections)
+            dep_emb = self.depsawr_mix(self.depsawr_forward(
+                kwargs['dw'], kwargs['ew'], mask, self.projections), mask)
+            embs.append(dep_emb)
         feat = torch.cat([feat, *embs], dim=-1)
 
         feat = self.word_dropout(feat)

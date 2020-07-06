@@ -2,9 +2,12 @@
 数据集
 """
 
+import os
 import copy
 import glob
 import codecs
+import pickle
+import random
 from typing import Dict, List, Any, Set
 from itertools import chain
 from collections import defaultdict
@@ -16,6 +19,11 @@ from nmnlp.core.dataset import DataSet
 from nmnlp.data.conll import ConlluDataset
 
 from translate import Translate
+
+try:
+    import xml.etree.cElementTree as et
+except ImportError:
+    import xml.etree.ElementTree as et
 
 translate = Translate()
 
@@ -259,10 +267,116 @@ class SRLDataset(DataSet):
         return result
 
 
+class PMBDataset(DataSet):
+    """ super-sense dataset """
+    index_fields = ("words", "labels", "pos")
+
+    def __init__(self,
+                 data: List,
+                 tokenizer: Any = None,
+                 pretrained_fields: Set[str] = ()):
+        super().__init__(data, tokenizer, pretrained_fields)
+
+    @staticmethod
+    def read_all(data_dir: str, lang: str = 'en', fold=8) -> List:
+        if os.path.isfile(f"{data_dir}/{fold}-fold.pkl"):
+            with codecs.open(f"{data_dir}/{fold}-fold.pkl", mode='rb') as file:
+                return pickle.load(file)
+
+        path_list, data = glob.glob(f"{data_dir}/data/{lang}/gold/*/d*/*.xml"), list()
+        # pos = set()
+
+        def token_to_dict(token):
+            tags = token.find('tags').findall('tag')
+            tags = {t.attrib['type']: t.text for t in tags}
+            # pos.add(tags.pop('sem', '<unk>'))
+            return tags
+
+        for p in path_list:
+            root = et.parse(p).getroot()
+            tokens = root.find('xdrs').find('taggedtokens').findall('tagtoken')
+            tokens = [token_to_dict(t) for t in tokens]
+            data.append([t for t in tokens if t['tok'] != 'ø'])
+
+        folds = [list() for _ in range(fold)]
+        random.shuffle(data)
+        for i, ins in enumerate(data):
+            folds[i % fold].append(ins)
+
+        with codecs.open(f"{data_dir}/{fold}-fold.pkl", mode='wb') as file:
+            return pickle.dump(folds, file)
+
+        return folds
+
+    @classmethod
+    def build(cls,
+              data: List,
+              tokenizer: Any = None,
+              pretrained_fields: Set[str] = (),
+              **kwargs):
+        dataset = cls(list(), tokenizer, pretrained_fields)
+        for ins in data:
+            dataset.text_to_instance(ins)
+        return dataset
+
+    def text_to_instance(self, sentence):
+        ins = {'words': list(), 'pos': list(), 'sent': list(), 'labels': list()}
+        pieces = dict()
+        # print('\n')
+        sentence.insert(0, {'tok': '[CLS]', 'pos': '<pad>', 'sem': '<pad>'})
+        sentence.append({'tok': '[SEP]', 'pos': '<pad>', 'sem': '<pad>'})
+
+        for i, row in enumerate(sentence):
+            # print(row)
+            ins['sent'].append(row['tok'])
+            ins['pos'].append(row['pos'])
+            if self.tokenizer is not None:
+                piece = self.tokenizer.tokenize(row['tok'])
+                if len(piece) > 0:
+                    ins['words'].append(piece[0])
+                    if len(piece) > 1:
+                        pieces[i] = [self.tokenizer.vocab[p] for p in piece]
+            else:
+                ins['words'].append(row['tok'].lower())
+            ins['labels'].append(row['sem'])
+
+        ins['word_pieces'] = pieces
+        if len(self.pretrained_fields) > 0:
+            ins["words" + PRETRAIN_POSTFIX] = copy.deepcopy(ins['words'])
+
+        self.data.append(ins)
+
+    def collate_fn(self, batch):
+        ids_sorted = sorted(
+            range(len(batch)), key=lambda i: len(batch[i]['words']), reverse=True)
+
+        max_len = len(batch[ids_sorted[0]]['words'])
+        result = defaultdict(lambda: torch.zeros(len(batch), max_len, dtype=torch.long))
+        result['seq_lens'] = list()
+        result['sentences'] = list()
+        result['word_pieces'] = dict()
+
+        for i, origin in zip(range(len(batch)), ids_sorted):
+            seq_len = len(batch[origin]['words'])
+            result['seq_lens'].append(seq_len)
+            result['sentences'].append(batch[origin]['sent'])
+            result['mask'][i, 1:seq_len] = 1
+            for key in ('words', 'pos', 'labels'):
+                result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
+            for key in self.pretrained_fields:
+                result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
+            for w, piece in batch[origin]['word_pieces'].items():
+                result['word_pieces'][(i, w)] = torch.LongTensor(piece)
+
+        result['upostag'] = result.pop('pos')
+        return result
+
+
 _DATASET = {
     'streusle': STREUSLEDataset,
     'srl': SRLDataset,
     'dep': ConlluDataset,
+    'pmb': PMBDataset
 }
 
 
