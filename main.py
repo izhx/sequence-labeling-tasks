@@ -1,7 +1,10 @@
 # coding=UTF-8
 
 import os
+import csv
+import copy
 import time
+import codecs
 import random
 import argparse
 from collections import defaultdict
@@ -16,6 +19,7 @@ import nmnlp
 from nmnlp.common.util import output, set_visible_devices
 from nmnlp.common.config import Config
 from nmnlp.core import Trainer, Vocabulary
+from nmnlp.core.trainer import to_device, format_metric
 from nmnlp.core.optim import build_optimizer
 
 from notag import parser_and_vocab_from_pretrained, collate_fn_wrapper
@@ -28,7 +32,7 @@ nmnlp.core.trainer.EARLY_STOP_THRESHOLD = 10
 _ARG_PARSER = argparse.ArgumentParser(description="我的实验，需要指定配置文件")
 _ARG_PARSER.add_argument('--yaml', '-y',
                          type=str,
-                         default='pmb',
+                         default='srlzh',
                          help='configuration file path.')
 _ARG_PARSER.add_argument('--cuda', '-c',
                          type=str,
@@ -36,7 +40,7 @@ _ARG_PARSER.add_argument('--cuda', '-c',
                          help='gpu ids, like: 1,2,3')
 _ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
 _ARG_PARSER.add_argument("--test", '-t',
-                         default=False,
+                         default=True,
                          action="store_true",
                          help="test mode")
 _ARGS = _ARG_PARSER.parse_args()
@@ -57,9 +61,6 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     model.to(device=device)
 
     optimizer = build_optimizer(model, **cfg['optim'])
-
-    # epoch_steps = len(dataset['train']) // cfg['trainer']['batch_size'] + 1
-
     scheduler = None
 
     if cfg['trainer']['tensorboard'] and _ARGS.debug:
@@ -67,18 +68,58 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     # cfg['trainer']['log_batch'] = _ARGS.debug
     trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, scheduler,
                       device, **cfg['trainer'])
-
-    # if 'pre_train_path' in cfg['trainer'] and os.path.isfile(
-    #         cfg['trainer']['pre_train_path']
-    # ):
-    #     trainer.load()
-    # else:
-    # trainer.epoch_start = 0
-
-    if not _ARGS.test:
-        trainer.train()
-        trainer.load()
+    trainer.train()
+    trainer.load()
     return trainer.test(dataset['test'], 64)
+
+
+def test_result(cfg: Config, vocab, dataset, device, parser):
+    model = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
+    para_num = sum([np.prod(list(p.size())) for p in model.parameters()])
+    output(f'param num: {para_num}, {para_num / 1000000:4f}M')
+    model.to(device=device)
+    optimizer = build_optimizer(model, **cfg['optim'])
+    trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, None,
+                      device, **cfg['trainer'])
+    trainer.load()
+
+    table = [['sentence_id', 'length', 'word_id', 'word', 'pos', 'label', 'prediction']]
+
+    def process_one(self, one_set, name, device, batch_size, epoch=None):
+        """ epoch is None means test stage.
+        """
+        loader = self.get_loader(one_set, batch_size)
+        len_loader = len(loader)
+        losses = torch.zeros(len_loader, device=device)
+        for i, batch in enumerate(loader):
+            model_output = self.model(**to_device(batch, device))
+            losses[i] = model_output['loss'].item()
+            for j, predicted_tags in enumerate(model_output['predicted_tags']):
+                sid = i * batch_size + j
+                length = batch['seq_lens'][j]
+                for n, word in enumerate(batch['sentences'][j]):
+                    pos = vocab.index_to_token(batch['upostag'][j, n].item(), 'upostag')
+                    label = vocab.index_to_token(batch['labels'][j, n].item(), 'labels')
+                    prediction = vocab.index_to_token(predicted_tags[n], 'labels')
+                    table.append([sid, length, n, word, pos, label, prediction])
+
+        metric_counter = copy.deepcopy(self.model.metric.counter)
+        metric = self.model.get_metrics(reset=True)
+        if epoch is not None and self.writer is not None:
+            metric['loss'] = losses.mean()
+            self.add_scalars('Very_Detail', metric, epoch, name)
+            self.writer.flush()
+        elif epoch is None:
+            output(f"Test {name} compete, {format_metric(metric)}")
+        return metric_counter, metric, losses
+
+    trainer.process_one = process_one
+    trainer.test(dataset['test'], 64)
+
+    with codecs.open(f"./dev/result/{trainer.prefix}.csv", mode='w', encoding='UTF-8') as file:
+        writer = csv.writer(file)
+        writer.writerows(table)
+    output(f"saved <./dev/result/{trainer.prefix}.csv>")
 
 
 def main():
@@ -157,8 +198,11 @@ def main():
     else:
         parser = None
 
-    run_once(cfg, vocab, dataset, device, parser)
-    loop(device)
+    if _ARGS.test:
+        test_result(cfg, vocab, dataset, device, parser)
+    else:
+        run_once(cfg, vocab, dataset, device, parser)
+        loop(device)
 
 
 def post_process(name, dataset, vocab):
