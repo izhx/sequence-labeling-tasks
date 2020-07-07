@@ -269,7 +269,7 @@ class SRLDataset(DataSet):
 
 class PMBDataset(DataSet):
     """ super-sense dataset """
-    index_fields = ("words", "labels", "pos")
+    index_fields = ("words", "labels", "upostag")
 
     def __init__(self,
                  data: List,
@@ -320,16 +320,16 @@ class PMBDataset(DataSet):
         return dataset
 
     def text_to_instance(self, sentence):
-        ins = {'words': list(), 'pos': list(), 'sent': list(), 'labels': list()}
+        ins = {'words': list(), 'upostag': list(), 'sent': list(), 'labels': list()}
         pieces = dict()
         # print('\n')
-        sentence.insert(0, {'tok': '[CLS]', 'pos': '<pad>', 'sem': '<pad>'})
-        sentence.append({'tok': '[SEP]', 'pos': '<pad>', 'sem': '<pad>'})
+        sentence.insert(0, {'tok': '[CLS]', 'pos': '<pad>', 'sem': '_'})
+        sentence.append({'tok': '[SEP]', 'pos': '<pad>', 'sem': '_'})
 
         for i, row in enumerate(sentence):
             # print(row)
             ins['sent'].append(row['tok'])
-            ins['pos'].append(row['pos'])
+            ins['upostag'].append(row['pos'])
             if self.tokenizer is not None:
                 piece = self.tokenizer.tokenize(row['tok'])
                 if len(piece) > 0:
@@ -360,15 +360,14 @@ class PMBDataset(DataSet):
             seq_len = len(batch[origin]['words'])
             result['seq_lens'].append(seq_len)
             result['sentences'].append(batch[origin]['sent'])
-            result['mask'][i, 1:seq_len] = 1
-            for key in ('words', 'pos', 'labels'):
+            result['mask'][i, :seq_len] = 1
+            for key in ('words', 'upostag', 'labels'):
                 result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
             for key in self.pretrained_fields:
                 result[key][i, :seq_len] = torch.LongTensor(batch[origin][key])
             for w, piece in batch[origin]['word_pieces'].items():
                 result['word_pieces'][(i, w)] = torch.LongTensor(piece)
 
-        result['upostag'] = result.pop('pos')
         return result
 
 

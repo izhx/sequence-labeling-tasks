@@ -134,16 +134,6 @@ def main():
             ]
             vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
             vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
-        elif 'pos' in vocab_kwargs['create_fields']:
-            pos = [
-                'TO', 'RQU', 'FW', 'CD', 'JJS', 'POS', 'WRB', 'RP', 'NN', 'NNS',
-                ',', 'CC', 'SO', 'VBZ', 'LRB', 'DT', 'NNPS', 'IN', 'RRB', 'NNP',
-                'VBG', 'WP$', 'PRP', '.', 'EX', 'JJ', 'UH', 'VBD', 'WP', ':',
-                'RBS', 'MD', 'RB', 'VBN', 'VBP', 'PDT', '$', 'PRP$', ';', 'JJR',
-                'VB', 'WDT', 'LQU']
-            pos = ['<pad>', '<unk>'] + pos
-            vocab._token_to_index['pos'] = {k: i for i, k in enumerate(pos)}
-            vocab._index_to_token['pos'] = {i: k for i, k in enumerate(pos)}
 
         if use_bert:
             vocab._token_to_index['words'] = tokenizer.vocab
@@ -205,6 +195,15 @@ def post_process(name, dataset, vocab):
         labels = ['B_' + i for i in labels] + ['I_' + i for i in labels] + ['O_' + i for i in labels]
         labels = ['<pad>', '<unk>'] + labels + ['O_`$', '_']
     elif name == 'pmb':
+        pos = [
+            'TO', 'RQU', 'FW', 'CD', 'JJS', 'POS', 'WRB', 'RP', 'NN', 'NNS',
+            ',', 'CC', 'SO', 'VBZ', 'LRB', 'DT', 'NNPS', 'IN', 'RRB', 'NNP',
+            'VBG', 'WP$', 'PRP', '.', 'EX', 'JJ', 'UH', 'VBD', 'WP', ':',
+            'RBS', 'MD', 'RB', 'VBN', 'VBP', 'PDT', '$', 'PRP$', ';', 'JJR',
+            'VB', 'WDT', 'LQU']
+        pos = ['<pad>', '<unk>'] + pos
+        vocab._token_to_index['upostag'] = {k: i for i, k in enumerate(pos)}
+        vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
         labels = [
             'PRO', 'DST', 'EXT', 'GRE', 'IST', 'GPE', 'SCO', 'EXS', 'GEO', 'DIS',
             'COL', 'LES', 'MOY', 'CLO', 'NOW', 'ORG', 'NOT', 'INT', 'DOW', 'NIL',
