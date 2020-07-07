@@ -40,7 +40,7 @@ _ARG_PARSER.add_argument('--cuda', '-c',
                          help='gpu ids, like: 1,2,3')
 _ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
 _ARG_PARSER.add_argument("--test", '-t',
-                         default=True,
+                         default=False,
                          action="store_true",
                          help="test mode")
 _ARGS = _ARG_PARSER.parse_args()
