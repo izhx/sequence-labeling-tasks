@@ -7,6 +7,7 @@ import time
 import codecs
 import random
 import argparse
+from typing import List, cast
 from collections import defaultdict
 from itertools import chain
 
@@ -19,7 +20,7 @@ import nmnlp
 from nmnlp.common.util import output, set_visible_devices
 from nmnlp.common.config import Config
 from nmnlp.core import Trainer, Vocabulary
-from nmnlp.core.trainer import to_device, format_metric
+from nmnlp.core.trainer import to_device, format_metric, clip_grad_func
 from nmnlp.core.optim import build_optimizer
 
 from notag import parser_and_vocab_from_pretrained, collate_fn_wrapper
@@ -42,7 +43,7 @@ _ARG_PARSER.add_argument('--debug', '-d', type=bool, default=False)
 _ARG_PARSER.add_argument("--test", '-t',
                          default=False,
                          action="store_true",
-                         help="test mode")
+                         help="测试模式，可保存测试结果，或ensemble")
 _ARGS = _ARG_PARSER.parse_args()
 
 
@@ -52,6 +53,35 @@ def set_seed(seed: int = 123):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def train_func(self, loader, epoch, step) -> torch.Tensor:
+    """ the training procedure of one epoch, can be overrided by user-defined.
+    """
+    losses = torch.zeros(len(loader), device=self.device)
+    dep_time = 0
+    for i, batch in enumerate(loader):
+        model_output = self.model(**to_device(batch, self.device))
+        loss = model_output['loss']
+        dep_time += model_output['dep_time']
+        losses[i] = loss.item()
+        if self.update_every == 1:
+            loss.backward()
+        else:
+            (loss / self.update_every).backward()  # gradient accumulation
+        if step:
+            if self.clip_grad:
+                clip_grad_func(self.model.parameters(), **self.clip_grad)
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            if self.scheduler:
+                self.scheduler.step()
+
+        if i % self.log_interval == 0 and self.writer:
+            n_example = (epoch * len(loader) + i) * loader.batch_size
+            self.writer.add_scalar('Train/loss', loss.item(), n_example)
+    print(f"===> dep time: {dep_time}")
+    return losses
 
 
 def run_once(cfg: Config, vocab, dataset, device, parser):
@@ -68,12 +98,25 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     # cfg['trainer']['log_batch'] = _ARGS.debug
     trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, scheduler,
                       device, **cfg['trainer'])
+    trainer.train_func = train_func  # 为了计时
     trainer.train()
     trainer.load()
     return trainer.test(dataset['test'], 64)
 
 
-def test_result(cfg: Config, vocab, dataset, device, parser):
+def tensor_avg(*tensors):
+    return sum(tensors) / len(tensors)
+
+
+def tensor_max(*tensors):
+    tensors = list(tensors)
+    for i in range(len(tensors)):
+        tensors[i] = tensors[i].unsqueeze(0)
+    all_max = torch.cat(tensors, dim=0).max(dim=0)[0]
+    return all_max
+
+
+def test_result(cfg: Config, vocab, dataset, device, parser, ensemble_path=None):
     model = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
     para_num = sum([np.prod(list(p.size())) for p in model.parameters()])
     output(f'param num: {para_num}, {para_num / 1000000:4f}M')
@@ -83,7 +126,20 @@ def test_result(cfg: Config, vocab, dataset, device, parser):
                       device, **cfg['trainer'])
     trainer.load()
 
-    table = [['sentence_id', 'length', 'word_id', 'word', 'pos', 'label', 'prediction']]
+    tensor_op = tensor_avg
+    if ensemble_path and os.path.isfile(ensemble_path):
+        another = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
+        another.to(device=device)
+        checkpoint = torch.load(ensemble_path, map_location=device)
+        another.load_state_dict(checkpoint['model'])
+        another.test_mode(device)
+        print(f"===> model loaded from <{ensemble_path}>")
+        tran = tensor_op(model.crf.transitions.data, another.crf.transitions.data)
+        model.crf.transitions.data = tran  # 发射概率矩阵也加权
+    else:
+        another = None
+
+    table = [['sentence_id', 'length', 'word_id', 'word', 'pos', 'indicator', 'label', 'prediction']]
 
     def process_one(self, one_set, name, device, batch_size, epoch=None):
         """ epoch is None means test stage.
@@ -91,17 +147,26 @@ def test_result(cfg: Config, vocab, dataset, device, parser):
         loader = self.get_loader(one_set, batch_size)
         len_loader = len(loader)
         losses = torch.zeros(len_loader, device=device)
+
         for i, batch in enumerate(loader):
-            model_output = self.model(**to_device(batch, device))
+            batch = to_device(batch, device)
+            model_output = self.model(**batch)
             losses[i] = model_output['loss'].item()
-            for j, predicted_tags in enumerate(model_output['predicted_tags']):
+            if another:
+                scores = another(**batch)['scores']
+                scores = tensor_op(scores, model_output['scores'])
+                best_paths = self.model.crf.viterbi_tags(scores, batch['mask'], 1)
+                model_output['predicted_tags'] = cast(List[List[int]], [x[0][0] for x in best_paths])
+
+            for j, predicted in enumerate(model_output['predicted_tags']):
                 sid = i * batch_size + j
                 length = batch['seq_lens'][j]
                 for n, word in enumerate(batch['sentences'][j]):
                     pos = vocab.index_to_token(batch['upostag'][j, n].item(), 'upostag')
                     label = vocab.index_to_token(batch['labels'][j, n].item(), 'labels')
-                    prediction = vocab.index_to_token(predicted_tags[n], 'labels')
-                    table.append([sid, length, n, word, pos, label, prediction])
+                    indicator = batch['indicator'][j, n].item()
+                    prediction = vocab.index_to_token(predicted[n], 'labels')
+                    table.append([sid, length, n, word, pos, indicator, label, prediction])
 
         metric_counter = copy.deepcopy(self.model.metric.counter)
         metric = self.model.get_metrics(reset=True)
@@ -199,7 +264,12 @@ def main():
         parser = None
 
     if _ARGS.test:
-        test_result(cfg, vocab, dataset, device, parser)
+        ensemble_path = None
+        # if _ARGS.yaml == 'srlen0':
+        #     ensemble_path = 'dev/model/ens-1_16.bac'
+        # elif _ARGS.yaml == 'srlen-dep0':
+        #     ensemble_path = 'dev/model/ens-dep1_25.bac'
+        test_result(cfg, vocab, dataset, device, parser, ensemble_path)
     else:
         run_once(cfg, vocab, dataset, device, parser)
         loop(device)

@@ -4,6 +4,7 @@
 
 from typing import Callable, Dict, List, Tuple, Union, Any, cast
 from itertools import chain
+import time
 
 import torch
 from torch.nn import Embedding, ModuleList
@@ -108,9 +109,13 @@ class SemanticRoleLabeler(Model):
 
         embs = [self.indicator_embedding(indicator), self.pos_embedding(upostag)]
         if self.depsawr_forward is not None:
+            dep_time = time.time()
             dep_emb = self.depsawr_mix(self.depsawr_forward(
                 kwargs['dw'], kwargs['ew'], mask, self.projections), mask)
+            dep_time = time.time() - dep_time
             embs.append(dep_emb)
+        else:
+            dep_time = 0
         feat = torch.cat([feat, *embs], dim=-1)
 
         feat = self.word_dropout(feat)
@@ -119,7 +124,7 @@ class SemanticRoleLabeler(Model):
         feat = self.word_dropout(feat)
 
         scores = self.tag_projection_layer(feat)
-        output = {}
+        output = output = {'scores': scores, 'dep_time': dep_time}
 
         if not self.training:
             best_paths = self.crf.viterbi_tags(scores, mask, top_k=self.top_k)
@@ -228,7 +233,7 @@ class CRFTagger(Model):
         feat = self.word_dropout(feat)
 
         scores = self.tag_projection_layer(feat)
-        output = {}
+        output = {'scores': scores}
 
         if not self.training:
             best_paths = self.crf.viterbi_tags(scores, mask, top_k=self.top_k)
