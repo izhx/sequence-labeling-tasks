@@ -56,7 +56,7 @@ def set_seed(seed: int = 123):
 
 
 def train_func(self, loader, epoch, step) -> torch.Tensor:
-    """ the training procedure of one epoch, can be overrided by user-defined.
+    """ 为了计时而覆盖的训练函数，就用了一次。以后考虑用callback形式。
     """
     losses = torch.zeros(len(loader), device=self.device)
     dep_time = 0
@@ -85,6 +85,7 @@ def train_func(self, loader, epoch, step) -> torch.Tensor:
 
 
 def run_once(cfg: Config, vocab, dataset, device, parser):
+    """ 一次训练流程。"""
     model = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
     para_num = sum([np.prod(list(p.size())) for p in model.parameters()])
     output(f'param num: {para_num}, {para_num / 1000000:4f}M')
@@ -98,9 +99,11 @@ def run_once(cfg: Config, vocab, dataset, device, parser):
     # cfg['trainer']['log_batch'] = _ARGS.debug
     trainer = Trainer(cfg, dataset, vocab, model, optimizer, None, scheduler,
                       device, **cfg['trainer'])
-    trainer.train_func = train_func  # 为了计时
+    # trainer.train_func = train_func  # 为了计时
+
+    # 训练过程
     trainer.train()
-    trainer.load()
+    trainer.load()  # 加载配置文件中给定path的checkpoint，存档模式为best时有意义
     return trainer.test(dataset['test'], 64)
 
 
@@ -128,14 +131,17 @@ def test_result(cfg: Config, vocab, dataset, device, parser, ensemble_path=None)
 
     tensor_op = tensor_avg
     if ensemble_path and os.path.isfile(ensemble_path):
+        # 如果给了ensemble_path，将其加载
         another = build_model(vocab=vocab, depsawr=parser, **cfg['model'])
         another.to(device=device)
         checkpoint = torch.load(ensemble_path, map_location=device)
         another.load_state_dict(checkpoint['model'])
         another.test_mode(device)
         print(f"===> model loaded from <{ensemble_path}>")
+
+        # 发射概率矩阵也按策略变换
         tran = tensor_op(model.crf.transitions.data, another.crf.transitions.data)
-        model.crf.transitions.data = tran  # 发射概率矩阵也加权
+        model.crf.transitions.data = tran
     else:
         another = None
 
@@ -153,11 +159,13 @@ def test_result(cfg: Config, vocab, dataset, device, parser, ensemble_path=None)
             model_output = self.model(**batch)
             losses[i] = model_output['loss'].item()
             if another:
+                # ensemble预测
                 scores = another(**batch)['scores']
                 scores = tensor_op(scores, model_output['scores'])
                 best_paths = self.model.crf.viterbi_tags(scores, batch['mask'], 1)
                 model_output['predicted_tags'] = cast(List[List[int]], [x[0][0] for x in best_paths])
 
+            # 记录测试结果
             for j, predicted in enumerate(model_output['predicted_tags']):
                 sid = i * batch_size + j
                 length = batch['seq_lens'][j]
@@ -178,7 +186,7 @@ def test_result(cfg: Config, vocab, dataset, device, parser, ensemble_path=None)
             output(f"Test {name} compete, {format_metric(metric)}")
         return metric_counter, metric, losses
 
-    trainer.process_one = process_one
+    trainer.process_one = process_one  # 覆盖trainer处理函数
     trainer.test(dataset['test'], 64)
 
     with codecs.open(f"./dev/result/{trainer.prefix}.csv", mode='w', encoding='UTF-8') as file:
@@ -194,12 +202,13 @@ def main():
 
     cfg['trainer']['epoch_start'] = 0
 
-    print(cfg.cfg)
+    print(cfg.cfg)  # 配置文件
 
     device = torch.device(f"cuda:{_ARGS.cuda}")  # set_visible_devices(_ARGS.cuda)
     data_kwargs, vocab_kwargs = dict(cfg['data']), dict(cfg['vocab'])
     use_bert = 'bert' in cfg['model']['word_embedding']['name_or_path']
 
+    # 如果用了BERT，要加载tokenizer
     if use_bert:
         tokenizer = BertTokenizer.from_pretrained(
             cfg['model']['word_embedding']['name_or_path'],
@@ -213,7 +222,9 @@ def main():
         tokenizer = None
 
     if not is_data(data_kwargs['cache']):
+        # 如果没有cache，重新读取数据并创建cache
         if data_kwargs['name'] == 'pmb':
+            # pmb的数据是单独处理，分8折
             folds = PMBDataset.read_all(data_kwargs['data_dir'])
             dataset = {
                 'train': PMBDataset.build(chain(*folds[:-2]), **data_kwargs),
@@ -224,15 +235,19 @@ def main():
             dataset = build_dataset(**data_kwargs)
 
         if use_bert:
+            # 用了BERT则不用对words建立词表
             vocab_kwargs['create_fields'] = {
                 k
                 for k in dataset['train'].index_fields if k != 'words'
             }
         else:
             vocab_kwargs['create_fields'] = dataset['train'].index_fields
+
+        # 建立词表
         vocab = Vocabulary.from_instances(dataset, **vocab_kwargs)
 
         if 'upostag' in vocab_kwargs['create_fields']:
+            # 将upostag词表人为的填充完整，数据里可能不全
             pos = [
                 'X', 'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN',
                 'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB',
@@ -242,19 +257,24 @@ def main():
             vocab._index_to_token['upostag'] = {i: k for i, k in enumerate(pos)}
 
         if use_bert:
+            # 若用BERT，则把words词表替换为BERT的
             vocab._token_to_index['words'] = tokenizer.vocab
             vocab._index_to_token['words'] = tokenizer.ids_to_tokens
 
+        # 其他后处理，比如标签词表的整理
         dataset, vocab = post_process(data_kwargs['name'], dataset, vocab)
 
         save_data(data_kwargs['cache'], dataset, vocab)
     else:
         dataset, vocab = read_data(data_kwargs['cache'])
 
+    # 用词表筛选出预训练词向量中出现过的，这里生成新vec后，要删掉上面数据cache，注释掉下面
+    # 每个任务跑一次select_vec就行。这里还是不太合理，以后调整
     # select_vec(dataset, "/data/private/zms/DEPSAWR/embeddings/glove.6B.300d.txt",
     #            f"{root}/dev/vec/glove_6B_300d_SEM.vec")
 
     if 'depsawr' in cfg.cfg:
+        # 读取预训练depsawr，把数据的collate function重新包装，
         parser, parser_vocab = parser_and_vocab_from_pretrained(cfg['depsawr'], device)
         for k in dataset:
             dataset[k].collate_fn = collate_fn_wrapper(parser_vocab, dataset[k].collate_fn)
@@ -264,6 +284,8 @@ def main():
         parser = None
 
     if _ARGS.test:
+        # 仅测试模式，读取checkpoint，测试并保存结果
+        # 需要ensemble的时候取消下方几行注释，给定checkpoint path
         ensemble_path = None
         # if _ARGS.yaml == 'srlen0':
         #     ensemble_path = 'dev/model/ens-1_16.bac'
@@ -271,7 +293,9 @@ def main():
         #     ensemble_path = 'dev/model/ens-dep1_25.bac'
         test_result(cfg, vocab, dataset, device, parser, ensemble_path)
     else:
+        # 训练
         run_once(cfg, vocab, dataset, device, parser)
+        # 训练结束后进入挂机死循环
         loop(device)
 
 

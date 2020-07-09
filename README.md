@@ -1,20 +1,26 @@
 # 几个序列标注任务
 
 ## 任务
-1. 任务1：Supersense-Tagged. https://github.com/nert-nlp/streusle/tree/v4.0
-2. 任务2：Grammatical Error Correction. http://ilexir.co.uk/media/fce-released-dataset.zip
-https://www.cl.cam.ac.uk/techreports/UCAM-CL-TR-894.pdf
-Issues in Preprocessing Current Datasets for Grammatical Error Correction
-3. 任务3：ORL 中英 Expression recognition
-4. 任务4：SRL 德语英语. https://github.com/System-T/UniversalPropositions
+1. 任务1：Supersense-Tagged. https://github.com/nert-nlp/streusle
+2. 任务2：SRL 英语德语汉语. https://github.com/System-T/UniversalPropositions
+3. 任务3：预测Sem tag, The Parallel Meaning Bank. https://pmb.let.rug.nl/
 
-## 依赖
+## 结构
 ```
-git clone https://github.com/izhx/nmnlp.git --depth 1
-
-git clone https://github.com/System-T/UniversalPropositions.git --depth 1
-
-git clone https://github.com/nert-nlp/streusle.git
-git checkout v4.0
+.
+├── data  # depsawr 用的vocab类，因为pickle的原因，必须放在顶层
+├── dev  # 存储实验文件的目录，如设置、日志、模型、数据cache、词向量等
+├── nmnlp  # submodule, 代码脚手架，用于提供trainer等
+├── notag  # 简化后的 depsawr 代码
+├── pmb-3.0.0  # The Parallel Meaning Bank 数据
+├── streusle  # submodule, Supersense 数据
+├── UniversalPropositions  # submodule, 多语言SRL数据
+├── datasets.py  # 数据读取相关代码
+├── main.py  # 主要实验脚本，训练、测试等
+├── metric.py  # 评价分数类
+├── models.py  # 模型代码，srl、crf tagger和自己写的depsawr，有tag的，以后改改可以放脚手架里
+├── README.md
+├── translate.py  # GitHub上找的繁体转简体的脚本
+└── util.py  # 工具代码，根据存的测试结果算F1的sql工具
 
 ```

@@ -1,0 +1,41 @@
+data:
+  cache: srl-en-emb
+  data_dir: ./UniversalPropositions/UP_English-EWT/
+  lang: en
+  name: srl
+  pretrained_fields: [words]
+  read_test: true
+depsawr: PARSER_PATH/BiaffineParser-notag/ptb
+model:
+  dep_dim: 300
+  dropout: 0.33
+  encoder: {hidden_size: 400, name: bilstm, num_layers: 3}
+  indicator_dim: 100
+  name: srl
+  pos_dim: 100
+  word_embedding: 
+    embedding_dim: 300
+    fusion_method: sum
+    name_or_path: pretrain
+    pretrained_file: ./dev/vec/glove_6B_300d_UP.vec
+    train_one: true
+    vocab_namespace: words
+optim: 
+  lr: 0.001
+  name: Adam
+trainer: 
+  batch_size: 64
+  early_stop: true
+  epoch_num: 200
+  epoch_start: 0
+  log_dir: YOUR_LOG_PATH/,
+  prefix: en-emb-dep
+  save_after: 10
+  save_dir: ./dev/model/
+  save_strategy: best
+  tensorboard: false
+vocab:
+  min_count: 
+    words: 1
+  pretrained_files: 
+    words: ./dev/vec/glove_6B_300d_UP.vec

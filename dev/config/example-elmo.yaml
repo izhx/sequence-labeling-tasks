@@ -1,0 +1,36 @@
+data:
+  cache: srl-en-emb  # 和embding的共用cache
+  data_dir: ./UniversalPropositions/UP_English-EWT/
+  lang: en
+  name: srl
+  pretrained_fields: [words]
+  read_test: true
+model:
+  dropout: 0.33
+  encoder: {hidden_size: 400, name: bilstm, num_layers: 3}
+  indicator_dim: 100
+  name: srl
+  pos_dim: 100
+  transform_dim: 300
+  word_embedding: 
+    do_layer_norm: true
+    name_or_path: YOUR_ELMO_PATH/elmo-original/5.5B_
+optim: 
+  lr: 0.001
+  name: Adam
+trainer: 
+  batch_size: 64
+  early_stop: true
+  epoch_num: 200
+  epoch_start: 0
+  log_dir: YOUR_LOG_PATH/,
+  prefix: en-elmo
+  save_after: 10
+  save_dir: ./dev/model/
+  save_strategy: best
+  tensorboard: false
+vocab:
+  min_count: 
+    words: 1
+  pretrained_files: 
+    words: ./dev/vec/glove_6B_300d_UP.vec
