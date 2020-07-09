@@ -5,6 +5,16 @@
 2. 任务2：SRL 英语德语汉语. https://github.com/System-T/UniversalPropositions
 3. 任务3：预测Sem tag, The Parallel Meaning Bank. https://pmb.let.rug.nl/
 
+## 使用
+写好配置文件，使用如下（默认加载`./dev/config/CONFIG_NAME.yml`的配置文件）：
+```
+python main.py -c=GPU_ID -y=CONFIG_NAME
+```
+或后台运行：
+```
+nohup python -u main.py -c=GPU_ID -y=CONFIG_NAME > ./dev/log/LOG_NAME &
+```
+
 ## 结构
 ```
 .
